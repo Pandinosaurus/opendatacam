@@ -83,7 +83,7 @@ Now you can…
 
 - Drag'n'Drop a video file into the browser window to have OpenDataCam analzye this file
 - Change the [video input](https://opendata.cam/docs/configuration/#video-input) to run from a USB-Cam or other cameras
-- Use custom [neural network weigts](https://opendata.cam/docs/configuration/#use-custom-neural-network-weights)
+- Use custom [neural network weights](https://opendata.cam/docs/configuration/#use-custom-neural-network-weights)
 
 and much more. See [Configuration](https://opendata.cam/docs/configuration/) for a full list of configuration options.
 
