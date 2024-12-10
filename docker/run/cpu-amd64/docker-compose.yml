@@ -2,10 +2,10 @@ version: "2.3"
 services:
   opendatacam:
     restart: always
-    image: opendatacam/opendatacam:v3.0.2-nano
+    image: opendatacam/opendatacam:development-cpu-amd64
     privileged: true
     volumes:
-      - './config.json:/var/local/opendatacam/config.json'
+      - '/Users/vsaw/Documents/Development/opendatacam/config.json:/var/local/opendatacam/config.json'
     ports:
       - "8080:8080"
       - "8070:8070"

@@ -27,8 +27,8 @@ describe('MongoDbManager', () => {
       }
     };
     collectionSpy = jasmine.createSpyObj('collection',
-      ['createIndex', 'deleteMany', 'deleteOne', 'updateOne', 'insertOne', 'remove', 'findOne',
-        'find', 'project', 'sort', 'limit', 'skip', 'toArray', 'countDocuments']);
+      ['createIndex', 'deleteMany', 'deleteOne', 'updateOne', 'insertOne', 'insertMany', 'remove',
+        'findOne', 'find', 'project', 'sort', 'limit', 'skip', 'toArray', 'countDocuments']);
     collectionSpy.find.and.returnValue(collectionSpy);
     collectionSpy.project.and.returnValue(collectionSpy);
     collectionSpy.sort.and.returnValue(collectionSpy);
@@ -41,6 +41,7 @@ describe('MongoDbManager', () => {
     collectionSpy.deleteMany.and.callFake(collectionSpyDefaultFake);
     collectionSpy.deleteOne.and.callFake(collectionSpyDefaultFake);
     collectionSpy.insertOne.and.callFake(collectionSpyDefaultFake);
+    collectionSpy.insertMany.and.callFake(collectionSpyDefaultFake);
     collectionSpy.findOne.and.callFake(collectionSpyDefaultFake);
 
     dbSpy = jasmine.createSpyObj('Db', { collection: collectionSpy });
@@ -53,23 +54,29 @@ describe('MongoDbManager', () => {
 
   describe('connection', () => {
     it('is disconnected at start', () => {
-      const connectionString = 'mongo://foo:218';
-      const db = new MongoDbManager(connectionString);
+      const config = {
+        url: 'mongo://foo:218',
+      };
+      const db = new MongoDbManager(config);
       expect(db.isConnected()).toBeFalse();
     });
 
     it('uses connection string', async () => {
-      const connectionString = 'mongo://foo:218';
-      const db = new MongoDbManager(connectionString);
-      db.connect(connectionString).then(
+      const config = {
+        url: 'mongo://foo:218',
+      };
+      const db = new MongoDbManager(config);
+      db.connect(config).then(
         () => { fail(); },
-        () => { expect(db.connectionString).toEqual(connectionString); },
+        () => { expect(db.config.url).toEqual(config.url); },
       );
     });
 
     it('rejets operations before connect', async () => {
-      const connectionString = 'mongo://foo:218';
-      const db = new MongoDbManager(connectionString);
+      const config = {
+        url: 'mongo://foo:218',
+      };
+      const db = new MongoDbManager(config);
       await expectAsync(db.persistAppSettings(null)).toBeRejected();
       await expectAsync(db.getAppSettings()).toBeRejected();
       await expectAsync(db.insertRecording(null)).toBeRejected();
@@ -82,10 +89,15 @@ describe('MongoDbManager', () => {
       await expectAsync(db.getCounterHistoryOfRecording('1')).toBeRejected();
     });
 
+    it('fails if no url or client', async () => {
+      const db = new MongoDbManager(null);
+      await expectAsync(db.connect()).toBeRejectedWithError();
+    });
+
     describe('mongoclient', () => {
       let connectionPromise = null;
       beforeEach(() => {
-        mdbm = new MongoDbManager(clientSpy);
+        mdbm = new MongoDbManager({ client: clientSpy });
         connectionPromise = mdbm.connect();
       });
 
@@ -95,7 +107,7 @@ describe('MongoDbManager', () => {
 
       it('connects if client is not connected', async () => {
         clientSpy.isConnected.and.returnValue(false);
-        mdbm = new MongoDbManager(clientSpy);
+        mdbm = new MongoDbManager({ client: clientSpy });
         await mdbm.connect();
 
         expect(clientSpy.connect).toHaveBeenCalled();
@@ -227,56 +239,104 @@ describe('MongoDbManager', () => {
   });
 
   describe('updateRecordingWithNewframe', () => {
+    const frameDate = new Date('2020-11-10T17:03:36.477Z');
+    const counterSummary = {
+      '07b765a7-f05c-47b7-988b-7be06cbe3e53': { _total: 1289, car: 1289 },
+    };
+    const trackerSummary = { totalItemsTracked: 63 };
+    const counterEntry = [
+      {
+        frameId: 1192,
+        timestamp: frameDate,
+        area: '07b765a7-f05c-47b7-988b-7be06cbe3e53',
+        name: 'car',
+        id: 273,
+        bearing: 308.6598082540901,
+        countingDirection: 'rightleft_bottomtop',
+        angleWithCountingLine: 63.0669522865207,
+      },
+    ];
+    const trackerEntry = {
+      recordingId: RECORDING_ID,
+      frameId: 377,
+      timestamp: frameDate,
+      objects: [
+        {
+          id: 5,
+          x: 351,
+          y: 245,
+          w: 85,
+          h: 49,
+          bearing: 90,
+          confidence: 50,
+          name: 'car',
+          areas: [],
+        },
+      ],
+    };
+
     const argsWithDetection = [
       RECORDING_ID,
-      new Date('2020-11-10T17:03:36.477Z'),
-      {},
-      { totalItemsTracked: 63 },
-      [],
-      {
-        recordingId: RECORDING_ID,
-        frameId: 377,
-        timestamp: new Date('2020-11-10T17:03:36.477Z'),
-        objects: [
-          {
-            id: 5,
-            x: 351,
-            y: 245,
-            w: 85,
-            h: 49,
-            bearing: 90,
-            confidence: 50,
-            name: 'car',
-            areas: [],
-          },
-        ],
-      },
+      frameDate,
+      counterSummary,
+      trackerSummary,
+      counterEntry,
+      trackerEntry,
     ];
 
     beforeEach(async () => {
-      mdbm = new MongoDbManager(clientSpy);
+      mdbm = new MongoDbManager({ client: clientSpy });
       await mdbm.connect();
     });
 
-    it('inserts tracker data with detections', async () => {
-      await mdbm.updateRecordingWithNewframe(...argsWithDetection);
+    describe('enabled tracker persistance', () => {
+      beforeEach(async () => {
+        mdbm = new MongoDbManager({ client: clientSpy, persistTracker: true });
+        await mdbm.connect();
+      });
 
-      expect(collectionSpy.insertOne).toHaveBeenCalled();
+      it('inserts tracker data with detections', async () => {
+        await mdbm.updateRecordingWithNewframe(...argsWithDetection);
+
+        expect(collectionSpy.insertOne).toHaveBeenCalled();
+      });
+
+      it('does not insert empty tracker frames', async () => {
+        const argsWithoutDetection = cloneDeep(argsWithDetection);
+        argsWithoutDetection[5].objects = [];
+
+        await mdbm.updateRecordingWithNewframe(...argsWithoutDetection);
+
+        expect(collectionSpy.insertOne).not.toHaveBeenCalled();
+      });
     });
 
-    it('does not insert empty tracker frames', async () => {
-      const argsWithoutDetection = cloneDeep(argsWithDetection);
-      argsWithoutDetection[5].objects = [];
-
-      await mdbm.updateRecordingWithNewframe(...argsWithoutDetection);
+    it('does not insert if tracker persistance is disabled', async () => {
+      await mdbm.updateRecordingWithNewframe(...argsWithDetection);
 
       expect(collectionSpy.insertOne).not.toHaveBeenCalled();
+    });
+
+    it('updates recording properties', async () => {
+      await mdbm.updateRecordingWithNewframe(...argsWithDetection);
+
+      expect(collectionSpy.updateOne.calls.mostRecent().args[0]).toEqual({ id: RECORDING_ID });
+      expect(collectionSpy.updateOne.calls.mostRecent().args[1]).toEqual({
+        $set: {
+          dateEnd: frameDate,
+          counterSummary,
+          trackerSummary,
+        },
+      });
+      expect(collectionSpy.insertMany).toHaveBeenCalledWith(
+        counterEntry.map((e) => ({ ...e, recordingId: RECORDING_ID })),
+      );
     });
   });
 
   describe('deleteRecording', () => {
     beforeEach(async () => {
-      mdbm = new MongoDbManager(clientSpy);
+      mdbm = new MongoDbManager({ client: clientSpy });
       await mdbm.connect();
 
       dbSpy.collection.calls.reset();
@@ -294,6 +354,12 @@ describe('MongoDbManager', () => {
       expect(dbSpy.collection).toHaveBeenCalledWith(mdbm.TRACKER_COLLECTION);
       const expectedCall = { recordingId: RECORDING_ID };
       expect(collectionSpy.deleteMany.calls.mostRecent().args[0]).toEqual(expectedCall);
+    });
+
+    it('deletes counterHistory for recording', () => {
+      expect(dbSpy.collection).toHaveBeenCalledWith(mdbm.COUNTER_COLLECTION);
+      const expectedCall = { recordingId: RECORDING_ID };
+      expect(collectionSpy.deleteMany.calls.first().args[0]).toEqual(expectedCall);
     });
 
     it('does not call obsolete methods', () => {

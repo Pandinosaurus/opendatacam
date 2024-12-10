@@ -1,6 +1,6 @@
 ARG DARKNET_VERSION=v2.0.0-beta3
 
-FROM opendatacam/darknet:$DARKNET_VERSION-desktop
+FROM opendatacam/darknet:$DARKNET_VERSION-cpu-amd64
 
 ENV DEBIAN_FRONTEND noninteractive
 
@@ -26,7 +26,7 @@ WORKDIR /var/local/darknet
 
 # COPY weights, get them localy in the Dockerfile folder previously as they are slow to download each time
 # Links: https://github.com/AlexeyAB/darknet#pre-trained-models
-COPY yolov4.weights yolov4.weights
+COPY yolov4-tiny.weights yolov4-tiny.weights
 
 # Include demo.mp4 file
 RUN mkdir opendatacam_videos && cd opendatacam_videos && wget https://github.com/opendatacam/opendatacam/raw/development/public/static/demo/demo.mp4
@@ -42,10 +42,10 @@ RUN npm run build
 # Set default settings for Desktop run
 RUN sed -i -e 's+TO_REPLACE_PATH_TO_DARKNET+/var/local/darknet+g' config.json && \
   sed -i -e 's+TO_REPLACE_VIDEO_INPUT+file+g' config.json && \
-  sed -i -e 's+TO_REPLACE_NEURAL_NETWORK+yolov4+g' config.json
+  sed -i -e 's+TO_REPLACE_NEURAL_NETWORK+yolov4-tiny+g' config.json
 
 EXPOSE 8080 8070 8090
 
-COPY docker/build/desktop/launch.sh launch.sh
+COPY docker/build/nano/launch.sh launch.sh
 RUN chmod 777 launch.sh
 CMD ["./launch.sh"]

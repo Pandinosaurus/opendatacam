@@ -5,11 +5,11 @@ class MongoDbManager extends DbManagerBase {
   /**
    * Creates a new MongoDbManager object
    *
-   * If connectionStringOrDbObject is a
+   * The `code` is an object with the following fields
    *
-   * - MongoClient: the MongoClient to use
-   * - String: The string will be used to create a new connection to the database and then the
-   *   "opendatacam" database will be used
+   * - url (string): The URL of the Mongo Server as a string
+   * - client (MongoClient): If a Mongo client already exists the object can be passed here
+   * - persistTracker (bool): Store raw tracker information. Default, false
    *
    * After creation {@link MongoDbManager.connect} must be called.
    *
@@ -19,9 +19,9 @@ class MongoDbManager extends DbManagerBase {
    * will be lost, while counter data should recover as Opendatacam always updates the whole counter
    * state.
    *
-   * @param {*} connectionStringOrMongoClient The MongoClient to use or credentials to create one
+   * @param {*} config The MongoClient to use or credentials to create one
    */
-  constructor(connectionStringOrMongoClient) {
+  constructor(config) {
     super();
 
     /**
@@ -37,6 +37,12 @@ class MongoDbManager extends DbManagerBase {
      */
     this.TRACKER_COLLECTION = 'tracker';
     /**
+     * Collection used to store the counter entries
+     *
+     * @private
+     */
+    this.COUNTER_COLLECTION = 'counter';
+    /**
      * Collection to store App Settings
      *
      * @private
@@ -49,7 +55,20 @@ class MongoDbManager extends DbManagerBase {
      */
     this.DATABASE_NAME = 'opendatacam';
 
-    this.connectionStringOrMongoClient = connectionStringOrMongoClient;
+    /**
+     * Store the configuration
+     */
+    this.config = {
+      persistTracker: false,
+    };
+
+    // Override default config
+    if (config) {
+      Object.keys(config).forEach((key) => {
+        this.config[key] = config[key];
+      });
+    }
+
     /**
      * The connection string used or null if a Db object was used for the connection or the
      * connection has not been established yet.
@@ -70,15 +89,19 @@ class MongoDbManager extends DbManagerBase {
 
       const trackerCollection = db.collection(this.TRACKER_COLLECTION);
       trackerCollection.createIndex({ recordingId: 1 });
+
+      const counterCollection = db.collection(this.COUNTER_COLLECTION);
+      counterCollection.createIndex({ recordingId: 1 });
+      counterCollection.createIndex({ frameId: 1 });
     };
 
-    const isConnectionString = typeof this.connectionStringOrMongoClient === 'string'
-      || this.connectionStringOrMongoClient instanceof String;
-    const isClientObject = typeof this.connectionStringOrMongoClient === 'object';
+    const isConnectionString = this.config.url !== undefined
+      && (typeof this.config.url === 'string' || this.config.url instanceof String);
+    const isClientObject = this.config.client !== undefined && typeof this.config.client === 'object';
 
     if (isConnectionString) {
       return new Promise((resolve, reject) => {
-        this.connectionString = this.connectionStringOrMongoClient;
+        this.connectionString = this.config.url;
         const mongoConnectParams = { useNewUrlParser: true, useUnifiedTopology: true };
         MongoClient.connect(this.connectionString, mongoConnectParams, (err, client) => {
           if (err) {
@@ -94,8 +117,9 @@ class MongoDbManager extends DbManagerBase {
           }
         });
       });
-    } if (isClientObject) {
-      this.client = this.connectionStringOrMongoClient;
+    }
+    if (isClientObject) {
+      this.client = this.config.client;
       if (!this.isConnected()) {
         return new Promise((resolve, reject) => {
           this.client.connect((err, client) => {
@@ -117,7 +141,7 @@ class MongoDbManager extends DbManagerBase {
       createCollectionsAndIndex(this.db);
       return Promise.resolve(this.db);
     }
-    return new Error();
+    return Promise.reject(new Error());
   }
 
   async disconnect() {
@@ -232,6 +256,22 @@ class MongoDbManager extends DbManagerBase {
       });
     });
 
+    const deleteCounterPromise = new Promise((resolve, reject) => {
+      this.getDB().then((db) => {
+        const filter = { recordingId };
+        db.collection(this.COUNTER_COLLECTION).deleteMany(filter, (err, r) => {
+          if (err) {
+            this.disconnect();
+            reject(err);
+          } else {
+            resolve(r);
+          }
+        });
+      }, (reason) => {
+        reject(reason);
+      });
+    });
+
     const deleteTrackerPromise = new Promise((resolve, reject) => {
       this.getDB().then((db) => {
         const filter = { recordingId };
@@ -248,7 +288,7 @@ class MongoDbManager extends DbManagerBase {
       });
     });
 
-    return Promise.all([deleteRecordingPromise, deleteTrackerPromise]);
+    return Promise.all([deleteRecordingPromise, deleteCounterPromise, deleteTrackerPromise]);
   }
 
   // TODO For larges array like the one we are using, we can't do that, perfs are terrible
@@ -275,18 +315,7 @@ class MongoDbManager extends DbManagerBase {
           counterSummary,
           trackerSummary,
         },
-        // Only add $push if we have a counted item
       };
-
-      const itemsToAdd = {};
-
-      // Add counterHistory when somethings counted
-      if (counterEntry.length > 0) {
-        itemsToAdd.counterHistory = {
-          $each: counterEntry,
-        };
-        updateRequest.$push = itemsToAdd;
-      }
 
       this.getDB().then((db) => {
         db.collection(this.RECORDING_COLLECTION).updateOne(
@@ -304,7 +333,13 @@ class MongoDbManager extends DbManagerBase {
           },
         );
 
-        if (trackerEntry.objects != null && trackerEntry.objects.length > 0) {
+        if (counterEntry.length > 0) {
+          const itemsToAdd = counterEntry.map((e) => ({ ...e, recordingId }));
+          db.collection(this.COUNTER_COLLECTION).insertMany(itemsToAdd);
+        }
+
+        const isNotEmptyFrame = trackerEntry.objects != null && trackerEntry.objects.length > 0;
+        if (isNotEmptyFrame && this.config.persistTracker) {
           db.collection(this.TRACKER_COLLECTION).insertOne(trackerEntry);
         }
       }, (reason) => {
@@ -417,16 +452,30 @@ class MongoDbManager extends DbManagerBase {
           .find(
             { id: recordingId },
           )
-          .toArray((err, docs) => {
+          .toArray((err, recordings) => {
             if (err) {
               this.disconnect().then(() => {
                 this.connect();
               });
               reject(err);
-            } else if (docs.length === 0) {
+            } else if (recordings.length === 0) {
               resolve({});
             } else {
-              resolve(docs[0]);
+              db.collection(this.COUNTER_COLLECTION)
+                .find({ recordingId })
+                .project({ _id: 0, recordingId: 0 })
+                .toArray((err2, counterHistory) => {
+                  if (err2) {
+                    this.disconnect().then(() => {
+                      this.connect();
+                    });
+                    reject(err2);
+                  } else {
+                    const recording = { ...recordings[0] };
+                    recording.counterHistory = counterHistory;
+                    resolve(recording);
+                  }
+                });
             }
           });
       }, (reason) => {

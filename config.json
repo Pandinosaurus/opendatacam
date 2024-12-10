@@ -1,5 +1,5 @@
 {
-  "OPENDATACAM_VERSION": "3.0.1",
+  "OPENDATACAM_VERSION": "3.0.2",
   "PATH_TO_YOLO_DARKNET" : "TO_REPLACE_PATH_TO_DARKNET",
   "CMD_TO_YOLO_DARKNET" : "TO_REPLACE_PATH_TO_DARKNET/darknet",
   "VIDEO_UPLOAD_FOLDER": "TO_REPLACE_PATH_TO_DARKNET/opendatacam_videos_uploaded",
@@ -18,7 +18,8 @@
     "confidence_threshold": 0.2,
     "iouLimit": 0.05,
     "unMatchedFrameTolerance": 5,
-    "fastDelete": true
+    "fastDelete": true,
+    "matchingAlgorithm": "kdTree"
   },
   "COUNTER_SETTINGS": {
     "countingAreaMinFramesInsideToBeCounted": 1,
@@ -26,7 +27,7 @@
     "minAngleWithCountingLineThreshold": 5,
     "computeTrajectoryBasedOnNbOfPastFrame": 5
   },
-  "VALID_CLASSES": ["*"],
+  "VALID_CLASSES": ["bicycle", "person", "truck", "motorbike", "car", "bus"],
   "DISPLAY_CLASSES": [
     { "class": "bicycle", "hexcode": "1F6B2"},
     { "class": "person", "hexcode": "1F6B6"},
@@ -82,7 +83,8 @@
   "DATABASE": "mongo",
   "DATABASE_PARAMS": {
     "mongo": {
-      "url": "mongodb://mongo:27017"
+      "url": "mongodb://mongo:27017",
+      "persistTracker": false
     }
   },
   "PORTS": {

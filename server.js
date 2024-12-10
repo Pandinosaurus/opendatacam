@@ -1,6 +1,9 @@
 // Ignore long apidoc comments while keeping the code to 100 chars per line.
 /* eslint max-len: ["warn", { "ignoreComments": true , "code": 100, "tabWidth": 2, "ignoreUrls": true }] */
 
+// Allow console output
+/* eslint no-console: "off" */
+
 const express = require('express')();
 const multer = require('multer');
 const serveStatic = require('serve-static');
@@ -45,6 +48,7 @@ console.log('-     Opendatacam initialized     -');
 console.log('- Config loaded:                  -');
 console.log(JSON.stringify(config, null, 2));
 console.log('-----------------------------------');
+Opendatacam.setConfig(config);
 
 // Initial YOLO config
 const yoloConfig = {
@@ -67,7 +71,7 @@ if (config.VIDEO_INPUT === 'simulation') {
     };
   }
 }
-const YOLO = new YoloDarknet(yoloConfig);
+let YOLO = new YoloDarknet(yoloConfig);
 
 // Select tracker, based on GPS settings in config
 let tracker = Tracker;
@@ -82,7 +86,8 @@ if (config.TRACKER_SETTINGS) {
     'unMatchedFrameTolerance',
     'fastDelete',
     'distanceFunc',
-    'distanceLimit'];
+    'distanceLimit',
+    'matchingAlgorithm'];
 
   paramKeys.forEach((key) => {
     if (key in config.TRACKER_SETTINGS) {
@@ -97,8 +102,7 @@ Opendatacam.setTracker(tracker);
 // Init connection to db
 let dbManager = null;
 if (config.DATABASE === 'mongo') {
-  const mongoUrl = config.DATABASE_PARAMS.mongo.url;
-  dbManager = new MongoDbManager(mongoUrl);
+  dbManager = new MongoDbManager(config.DATABASE_PARAMS.mongo);
 }
 
 if (dbManager !== null) {
@@ -141,7 +145,12 @@ app.prepare()
     express.get('/', (req, res) => {
       YOLO.start(); // Inside yolo process will check is started
 
-      const urlData = getURLData(req);
+      const urlData = {
+        hostname: 'localhost',
+        port: configHelper.getJsonStreamPort(),
+        path: '/',
+        method: 'GET',
+      };
       Opendatacam.listenToYOLO(YOLO, urlData);
 
       return app.render(req, res, '/');
@@ -184,8 +193,7 @@ app.prepare()
     express.get('/webcam/stream', (req, res) => {
     // Proxy MJPEG stream from darknet to avoid freezing issues
       if (mjpgProxy == null) {
-        const urlData = getURLData(req);
-        mjpgProxy = new MjpegProxy(`http://${urlData.address}:${config.PORTS.darknet_mjpeg_stream}`);
+        mjpgProxy = new MjpegProxy(`http://localhost:${config.PORTS.darknet_mjpeg_stream}`);
       }
       return mjpgProxy.proxyRequest(req, res);
     });
@@ -837,7 +845,7 @@ app.prepare()
      */
     express.get('/recording/:id/counter', (req, res) => {
       dbManager.getCounterHistoryOfRecording(req.params.id).then((counterData) => {
-        if(Object.keys(counterData).length === 0) {
+        if (Object.keys(counterData).length === 0) {
           res.sendStatus(404);
           return;
         }
@@ -973,7 +981,7 @@ app.prepare()
      *
      * @apiSuccessExample {json} Success Response:
      * {
-        "OPENDATACAM_VERSION": "3.0.1",
+        "OPENDATACAM_VERSION": "3.0.2",
         "PATH_TO_YOLO_DARKNET": "/darknet",
         "VIDEO_INPUT": "TO_REPLACE_VIDEO_INPUT",
         "NEURAL_NETWORK": "TO_REPLACE_NEURAL_NETWORK",
@@ -1088,7 +1096,7 @@ app.prepare()
     const uploadMulter = multer({
       storage,
       fileFilter(req, file, cb) {
-        if (file.originalname.match(/\.(mp4|avi|mov)$/)) {
+        if (file.originalname.toLowerCase().match(/\.(mp4|avi|mov)$/)) {
           cb(null, true);
         } else {
           cb(new Error('Only video files are allowed!'));
@@ -1122,7 +1130,7 @@ app.prepare()
           const yoloConfigClone = cloneDeep(yoloConfig);
           yoloConfigClone.videoParams = req.file.path;
           yoloConfigClone.videoType = 'file';
-          YOLO.init(yoloConfigClone);
+          YOLO = new YoloDarknet(yoloConfigClone);
 
           YOLO.start();
           Opendatacam.recordingStatus.filename = req.file.filename;
